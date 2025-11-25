@@ -9,6 +9,38 @@ const listUsers = async (req, res, next) => {
   }
 };
 
+const searchUsers = async (req, res, next) => {
+  try {
+    const {
+      query,
+      role,
+      profession,
+      createdAfter,
+      createdBefore,
+      sortBy,
+      sortOrder,
+      page,
+      limit,
+    } = req.query;
+
+    const result = await userService.search({
+      query,
+      role,
+      profession,
+      createdAfter,
+      createdBefore,
+      sortBy,
+      sortOrder,
+      page,
+      limit,
+    });
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getUser = async (req, res, next) => {
   try {
     const user = await userService.findById(req.params.id);
@@ -72,6 +104,7 @@ const updateProfile = async (req, res, next) => {
 
 module.exports = {
   listUsers,
+  searchUsers,
   getUser,
   createUser,
   updateUser,

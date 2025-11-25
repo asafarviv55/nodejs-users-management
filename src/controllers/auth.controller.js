@@ -3,7 +3,8 @@ const authService = require('../services/auth.service');
 const login = async (req, res, next) => {
   try {
     const { name, password } = req.body;
-    const result = await authService.login(name, password);
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const result = await authService.login(name, password, ipAddress);
     res.json(result);
   } catch (error) {
     next(error);

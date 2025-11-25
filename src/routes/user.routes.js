@@ -7,6 +7,7 @@ const { authenticate, requireAdmin } = require('../middleware/auth.middleware');
 
 // Protected routes
 router.get('/', authenticate, userController.listUsers);
+router.get('/search', authenticate, userController.searchUsers);
 router.get('/:id', authenticate, userController.getUser);
 
 // Admin only routes

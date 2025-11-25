@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const bcrypt = require('bcryptjs');
 const config = require('../config/env');
 const { AppError } = require('../middleware/error.middleware');
+const passwordPolicy = require('./password-policy.service');
 
 const SALT_ROUNDS = 10;
 
@@ -38,7 +39,79 @@ class UserService {
 
   async findAll() {
     const users = await this.loadUsers();
-    return Object.values(users).map(({ password, ...user }) => user);
+    return Object.values(users).map(({ password, passwordHistory, ...user }) => user);
+  }
+
+  async search(filters = {}) {
+    const users = await this.loadUsers();
+    let result = Object.values(users).map(({ password, passwordHistory, ...user }) => user);
+
+    // Text search across name and profession
+    if (filters.query) {
+      const query = filters.query.toLowerCase();
+      result = result.filter(
+        (user) =>
+          user.name.toLowerCase().includes(query) ||
+          (user.profession && user.profession.toLowerCase().includes(query)) ||
+          (user.email && user.email.toLowerCase().includes(query))
+      );
+    }
+
+    // Filter by role
+    if (filters.role) {
+      result = result.filter((user) => user.role === filters.role);
+    }
+
+    // Filter by profession
+    if (filters.profession) {
+      result = result.filter(
+        (user) => user.profession && user.profession.toLowerCase() === filters.profession.toLowerCase()
+      );
+    }
+
+    // Filter by date range
+    if (filters.createdAfter) {
+      result = result.filter(
+        (user) => new Date(user.createdAt) >= new Date(filters.createdAfter)
+      );
+    }
+
+    if (filters.createdBefore) {
+      result = result.filter(
+        (user) => new Date(user.createdAt) <= new Date(filters.createdBefore)
+      );
+    }
+
+    // Sorting
+    const sortBy = filters.sortBy || 'createdAt';
+    const sortOrder = filters.sortOrder === 'asc' ? 1 : -1;
+
+    result.sort((a, b) => {
+      if (sortBy === 'name') {
+        return sortOrder * a.name.localeCompare(b.name);
+      } else if (sortBy === 'createdAt') {
+        return sortOrder * (new Date(a.createdAt) - new Date(b.createdAt));
+      } else if (sortBy === 'updatedAt') {
+        const aDate = a.updatedAt ? new Date(a.updatedAt) : new Date(a.createdAt);
+        const bDate = b.updatedAt ? new Date(b.updatedAt) : new Date(b.createdAt);
+        return sortOrder * (aDate - bDate);
+      }
+      return 0;
+    });
+
+    // Pagination
+    const page = parseInt(filters.page, 10) || 1;
+    const limit = parseInt(filters.limit, 10) || 10;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+
+    return {
+      users: result.slice(startIndex, endIndex),
+      total: result.length,
+      page,
+      limit,
+      totalPages: Math.ceil(result.length / limit),
+    };
   }
 
   async findById(id) {
@@ -51,7 +124,7 @@ class UserService {
       return null;
     }
 
-    const { password, ...user } = users[userKey];
+    const { password, passwordHistory, ...user } = users[userKey];
     return user;
   }
 
@@ -70,6 +143,9 @@ class UserService {
       throw new AppError('Name and password are required', 400);
     }
 
+    // Validate password against policy
+    passwordPolicy.validatePassword(password);
+
     const existingUser = await this.findByName(name);
     if (existingUser) {
       throw new AppError('User with this name already exists', 409);
@@ -84,6 +160,8 @@ class UserService {
       id,
       name,
       password: hashedPassword,
+      passwordHistory: [hashedPassword],
+      passwordChangedAt: new Date().toISOString(),
       profession: profession || '',
       role,
       createdAt: new Date().toISOString(),
@@ -91,7 +169,7 @@ class UserService {
 
     await this.saveUsers(users);
 
-    const { password: _, ...newUser } = users[userKey];
+    const { password: _, passwordHistory, ...newUser } = users[userKey];
     return newUser;
   }
 
@@ -105,11 +183,21 @@ class UserService {
       throw new AppError('User not found', 404);
     }
 
-    const { name, profession, role } = updateData;
+    const { name, profession, role, avatar, email, phone, bio } = updateData;
 
     if (name) users[userKey].name = name;
     if (profession !== undefined) users[userKey].profession = profession;
     if (role) users[userKey].role = role;
+    if (avatar !== undefined) {
+      // Validate base64 image format
+      if (avatar && !avatar.startsWith('data:image/')) {
+        throw new AppError('Avatar must be a valid base64 image', 400);
+      }
+      users[userKey].avatar = avatar;
+    }
+    if (email !== undefined) users[userKey].email = email;
+    if (phone !== undefined) users[userKey].phone = phone;
+    if (bio !== undefined) users[userKey].bio = bio;
     users[userKey].updatedAt = new Date().toISOString();
 
     await this.saveUsers(users);
@@ -128,7 +216,19 @@ class UserService {
       throw new AppError('User not found', 404);
     }
 
-    users[userKey].password = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    // Validate password against policy
+    passwordPolicy.validatePassword(newPassword);
+
+    const hashedPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    // Check password history
+    const passwordHistory = users[userKey].passwordHistory || [];
+    passwordPolicy.checkPasswordReuse(hashedPassword, passwordHistory);
+
+    // Update password and history
+    users[userKey].password = hashedPassword;
+    users[userKey].passwordHistory = [...passwordHistory, hashedPassword].slice(-5);
+    users[userKey].passwordChangedAt = new Date().toISOString();
     users[userKey].updatedAt = new Date().toISOString();
 
     await this.saveUsers(users);
