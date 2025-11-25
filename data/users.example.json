@@ -1,0 +1,10 @@
+{
+  "user1": {
+    "id": 1,
+    "name": "admin",
+    "password": "$2a$10$example.hashed.password.here",
+    "profession": "administrator",
+    "role": "admin",
+    "createdAt": "2024-01-01T00:00:00.000Z"
+  }
+}
